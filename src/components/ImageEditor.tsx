@@ -14,7 +14,6 @@ interface ImageEditorProps {
 
 export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const drawingCanvasRef = useRef<HTMLCanvasElement>(null);
   const [rotation, setRotation] = useState(0);
   const [brightness, setBrightness] = useState(100);
   const [contrast, setContrast] = useState(100);
@@ -25,30 +24,20 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
   const [brushSize, setBrushSize] = useState(3);
   const [brushColor, setBrushColor] = useState("#ff0000");
   const [lastPoint, setLastPoint] = useState<{ x: number; y: number } | null>(null);
-  const [drawingHistory, setDrawingHistory] = useState<ImageData[]>([]);
+  const [drawingPaths, setDrawingPaths] = useState<Array<{
+    points: Array<{ x: number; y: number }>;
+    color: string;
+    size: number;
+  }>>([]);
 
   useEffect(() => {
     const img = new Image();
     img.onload = () => {
       setOriginalImage(img);
       drawImage(img);
-      initializeDrawingCanvas();
     };
     img.src = imageUrl;
   }, [imageUrl]);
-
-  const initializeDrawingCanvas = () => {
-    const drawingCanvas = drawingCanvasRef.current;
-    if (!drawingCanvas || !originalImage) return;
-
-    drawingCanvas.width = originalImage.width;
-    drawingCanvas.height = originalImage.height;
-    
-    const ctx = drawingCanvas.getContext('2d');
-    if (ctx) {
-      ctx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
-    }
-  };
 
   const drawImage = (img: HTMLImageElement) => {
     const canvas = canvasRef.current;
@@ -79,18 +68,31 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
     
     ctx.restore();
 
-    // Draw the drawing layer on top
-    const drawingCanvas = drawingCanvasRef.current;
-    if (drawingCanvas) {
-      ctx.drawImage(drawingCanvas, 0, 0);
-    }
+    // Draw all drawing paths
+    drawingPaths.forEach(path => {
+      if (path.points.length < 2) return;
+      
+      ctx.strokeStyle = path.color;
+      ctx.lineWidth = path.size;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      
+      ctx.beginPath();
+      ctx.moveTo(path.points[0].x, path.points[0].y);
+      
+      for (let i = 1; i < path.points.length; i++) {
+        ctx.lineTo(path.points[i].x, path.points[i].y);
+      }
+      
+      ctx.stroke();
+    });
   };
 
   useEffect(() => {
     if (originalImage) {
       drawImage(originalImage);
     }
-  }, [rotation, brightness, contrast, saturation, originalImage]);
+  }, [rotation, brightness, contrast, saturation, originalImage, drawingPaths]);
 
   const getMousePos = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -109,48 +111,36 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!drawingMode) return;
     
-    const drawingCanvas = drawingCanvasRef.current;
-    if (!drawingCanvas) return;
-
-    const ctx = drawingCanvas.getContext('2d');
-    if (!ctx) return;
-
-    // Save current state for undo
-    const imageData = ctx.getImageData(0, 0, drawingCanvas.width, drawingCanvas.height);
-    setDrawingHistory(prev => [...prev, imageData]);
-
     setIsDrawing(true);
     const pos = getMousePos(e);
     setLastPoint(pos);
+    
+    // Start a new drawing path
+    const newPath = {
+      points: [pos],
+      color: brushColor,
+      size: brushSize
+    };
+    
+    setDrawingPaths(prev => [...prev, newPath]);
   };
 
   const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || !drawingMode || !lastPoint) return;
-
-    const drawingCanvas = drawingCanvasRef.current;
-    if (!drawingCanvas) return;
-
-    const ctx = drawingCanvas.getContext('2d');
-    if (!ctx) return;
+    if (!isDrawing || !drawingMode) return;
 
     const currentPos = getMousePos(e);
-
-    ctx.strokeStyle = brushColor;
-    ctx.lineWidth = brushSize;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    ctx.beginPath();
-    ctx.moveTo(lastPoint.x, lastPoint.y);
-    ctx.lineTo(currentPos.x, currentPos.y);
-    ctx.stroke();
+    
+    // Add point to current path
+    setDrawingPaths(prev => {
+      const newPaths = [...prev];
+      const currentPath = newPaths[newPaths.length - 1];
+      if (currentPath) {
+        currentPath.points.push(currentPos);
+      }
+      return newPaths;
+    });
 
     setLastPoint(currentPos);
-    
-    // Redraw the main canvas with the updated drawing
-    if (originalImage) {
-      drawImage(originalImage);
-    }
   };
 
   const stopDrawing = () => {
@@ -163,22 +153,9 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
   };
 
   const handleUndo = () => {
-    if (drawingHistory.length === 0) return;
-
-    const drawingCanvas = drawingCanvasRef.current;
-    if (!drawingCanvas) return;
-
-    const ctx = drawingCanvas.getContext('2d');
-    if (!ctx) return;
-
-    const lastState = drawingHistory[drawingHistory.length - 1];
-    ctx.putImageData(lastState, 0, 0);
+    if (drawingPaths.length === 0) return;
     
-    setDrawingHistory(prev => prev.slice(0, -1));
-    
-    if (originalImage) {
-      drawImage(originalImage);
-    }
+    setDrawingPaths(prev => prev.slice(0, -1));
   };
 
   const handleSave = () => {
@@ -199,16 +176,7 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
     setBrightness(100);
     setContrast(100);
     setSaturation(100);
-    setDrawingHistory([]);
-    
-    // Clear drawing canvas
-    const drawingCanvas = drawingCanvasRef.current;
-    if (drawingCanvas) {
-      const ctx = drawingCanvas.getContext('2d');
-      if (ctx) {
-        ctx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
-      }
-    }
+    setDrawingPaths([]);
   };
 
   return (
@@ -217,15 +185,13 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
       <div className="relative bg-gray-100 rounded-lg overflow-hidden">
         <canvas
           ref={canvasRef}
-          className="max-w-full h-auto max-h-96 object-contain mx-auto block cursor-crosshair"
+          className={`max-w-full h-auto max-h-96 object-contain mx-auto block ${
+            drawingMode ? 'cursor-crosshair' : 'cursor-default'
+          }`}
           onMouseDown={startDrawing}
           onMouseMove={draw}
           onMouseUp={stopDrawing}
           onMouseLeave={stopDrawing}
-        />
-        <canvas
-          ref={drawingCanvasRef}
-          className="hidden"
         />
       </div>
 
@@ -272,7 +238,7 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
                 variant="outline"
                 size="sm"
                 onClick={handleUndo}
-                disabled={drawingHistory.length === 0}
+                disabled={drawingPaths.length === 0}
                 className="bg-white/80"
               >
                 <Undo2 className="w-4 h-4" />

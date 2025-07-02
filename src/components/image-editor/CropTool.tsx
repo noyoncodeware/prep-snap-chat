@@ -18,7 +18,6 @@ export const CropTool = ({ canvas, onApplyCrop, onRotate, onFlipHorizontal, onFl
   const [isResizing, setIsResizing] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [resizeHandle, setResizeHandle] = useState<string>("");
-  const overlayRef = useRef<HTMLDivElement>(null);
 
   const handleCropToggle = () => {
     setCropEnabled(!cropEnabled);
@@ -72,33 +71,35 @@ export const CropTool = ({ canvas, onApplyCrop, onRotate, onFlipHorizontal, onFl
     const rect = canvas.getBoundingClientRect();
     
     if (isDragging) {
-      const newX = Math.max(0, Math.min(e.clientX - dragStart.x, rect.width - cropArea.width));
-      const newY = Math.max(0, Math.min(e.clientY - dragStart.y, rect.height - cropArea.height));
+      const newX = Math.max(0, Math.min(e.clientX - rect.left - dragStart.x + cropArea.x, rect.width - cropArea.width));
+      const newY = Math.max(0, Math.min(e.clientY - rect.top - dragStart.y + cropArea.y, rect.height - cropArea.height));
       setCropArea(prev => ({ ...prev, x: newX, y: newY }));
     } else if (isResizing) {
-      const deltaX = e.clientX - dragStart.x;
-      const deltaY = e.clientY - dragStart.y;
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const deltaX = mouseX - (dragStart.x - rect.left);
+      const deltaY = mouseY - (dragStart.y - rect.top);
       
       setCropArea(prev => {
         let newArea = { ...prev };
         
         if (resizeHandle.includes("right")) {
-          newArea.width = Math.max(50, Math.min(prev.width + deltaX, rect.width - prev.x));
+          newArea.width = Math.max(50, Math.min(mouseX - prev.x, rect.width - prev.x));
         }
         if (resizeHandle.includes("left")) {
           const newWidth = Math.max(50, prev.width - deltaX);
-          const newX = Math.max(0, prev.x + (prev.width - newWidth));
+          const newX = Math.max(0, mouseX - newWidth);
           newArea.x = newX;
-          newArea.width = newWidth;
+          newArea.width = Math.min(newWidth, rect.width - newX);
         }
         if (resizeHandle.includes("bottom")) {
-          newArea.height = Math.max(50, Math.min(prev.height + deltaY, rect.height - prev.y));
+          newArea.height = Math.max(50, Math.min(mouseY - prev.y, rect.height - prev.y));
         }
         if (resizeHandle.includes("top")) {
           const newHeight = Math.max(50, prev.height - deltaY);
-          const newY = Math.max(0, prev.y + (prev.height - newHeight));
+          const newY = Math.max(0, mouseY - newHeight);
           newArea.y = newY;
-          newArea.height = newHeight;
+          newArea.height = Math.min(newHeight, rect.height - newY);
         }
         
         return newArea;
@@ -127,73 +128,82 @@ export const CropTool = ({ canvas, onApplyCrop, onRotate, onFlipHorizontal, onFl
   }, [isDragging, isResizing, dragStart, cropArea, canvas]);
 
   return (
-    <div className="space-y-3 p-3 bg-gray-50 rounded-lg">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+    <>
+      <div className="space-y-3 p-3 bg-gray-50 rounded-lg">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Button
+              variant={cropEnabled ? "default" : "outline"}
+              size="sm"
+              onClick={handleCropToggle}
+              className={cropEnabled ? "bg-blue-600 text-white" : "bg-white/80"}
+            >
+              <Crop className="w-4 h-4 mr-1" />
+              {cropEnabled ? "Cancel Crop" : "Crop"}
+            </Button>
+            
+            {cropEnabled && (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleApplyCrop}
+                className="bg-green-600 text-white"
+              >
+                Apply Crop
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex gap-2">
           <Button
-            variant={cropEnabled ? "default" : "outline"}
+            variant="outline"
             size="sm"
-            onClick={handleCropToggle}
-            className={cropEnabled ? "bg-blue-600 text-white" : "bg-white/80"}
+            onClick={onRotate}
+            className="bg-white/80"
           >
-            <Crop className="w-4 h-4 mr-1" />
-            {cropEnabled ? "Cancel Crop" : "Crop"}
+            <RotateCw className="w-4 h-4 mr-1" />
+            Rotate
           </Button>
           
-          {cropEnabled && (
-            <Button
-              variant="default"
-              size="sm"
-              onClick={handleApplyCrop}
-              className="bg-green-600 text-white"
-            >
-              Apply Crop
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onFlipHorizontal}
+            className="bg-white/80"
+          >
+            <FlipHorizontal className="w-4 h-4" />
+          </Button>
+          
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onFlipVertical}
+            className="bg-white/80"
+          >
+            <FlipVertical className="w-4 h-4" />
+          </Button>
         </div>
+
+        {cropEnabled && (
+          <div className="text-xs text-gray-600 bg-blue-50 p-2 rounded">
+            <p>• Drag the crop box to move it</p>
+            <p>• Drag the corners or edges to resize</p>
+            <p>• Click "Apply Crop" when ready</p>
+          </div>
+        )}
       </div>
 
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onRotate}
-          className="bg-white/80"
-        >
-          <RotateCw className="w-4 h-4 mr-1" />
-          Rotate
-        </Button>
-        
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onFlipHorizontal}
-          className="bg-white/80"
-        >
-          <FlipHorizontal className="w-4 h-4" />
-        </Button>
-        
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onFlipVertical}
-          className="bg-white/80"
-        >
-          <FlipVertical className="w-4 h-4" />
-        </Button>
-      </div>
-
-      {/* Interactive Crop Overlay */}
+      {/* Interactive Crop Overlay - positioned relative to canvas */}
       {cropEnabled && canvas && (
         <div 
-          ref={overlayRef}
-          className="absolute inset-0 pointer-events-none"
+          className="absolute inset-0 pointer-events-none z-10"
           style={{
             position: 'absolute',
-            top: canvas.offsetTop,
-            left: canvas.offsetLeft,
-            width: canvas.offsetWidth,
-            height: canvas.offsetHeight,
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
           }}
         >
           {/* Crop Box */}
@@ -289,14 +299,6 @@ export const CropTool = ({ canvas, onApplyCrop, onRotate, onFlipHorizontal, onFl
           </div>
         </div>
       )}
-
-      {cropEnabled && (
-        <div className="text-xs text-gray-600 bg-blue-50 p-2 rounded">
-          <p>• Drag the crop box to move it</p>
-          <p>• Drag the corners or edges to resize</p>
-          <p>• Click "Apply Crop" when ready</p>
-        </div>
-      )}
-    </div>
+    </>
   );
 };

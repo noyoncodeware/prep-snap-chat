@@ -406,14 +406,16 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
           />
         </TabsContent>
         
-        <TabsContent value="crop" className="space-y-4 relative">
-          <CropTool
-            canvas={canvasRef.current}
-            onApplyCrop={handleCrop}
-            onRotate={handleRotate}
-            onFlipHorizontal={handleFlipHorizontal}
-            onFlipVertical={handleFlipVertical}
-          />
+        <TabsContent value="crop" className="space-y-4">
+          <div className="relative">
+            <CropTool
+              canvas={canvasRef.current}
+              onApplyCrop={handleCrop}
+              onRotate={handleRotate}
+              onFlipHorizontal={handleFlipHorizontal}
+              onFlipVertical={handleFlipVertical}
+            />
+          </div>
         </TabsContent>
         
         <TabsContent value="draw" className="space-y-4">

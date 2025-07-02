@@ -1,7 +1,6 @@
-
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
-import { Palette, Sun, Contrast, Droplets, Zap, Blur } from "lucide-react";
+import { Palette, Sun, Contrast, Droplets, Zap, Focus } from "lucide-react";
 
 interface FiltersPanelProps {
   brightness: number;
@@ -109,7 +108,7 @@ export const FiltersPanel = ({
         </div>
 
         <div className="flex items-center gap-3">
-          <Blur className="w-3 h-3 text-gray-600" />
+          <Focus className="w-3 h-3 text-gray-600" />
           <span className="text-xs font-medium text-gray-700 w-16">Blur</span>
           <Slider
             value={[blur]}

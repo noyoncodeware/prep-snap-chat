@@ -234,11 +234,16 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
     // Copy cropped area
     tempCtx.drawImage(canvas, cropData.x, cropData.y, cropData.width, cropData.height, 0, 0, cropData.width, cropData.height);
     
-    // Update canvas size and redraw
-    canvas.width = cropData.width;
-    canvas.height = cropData.height;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(tempCanvas, 0, 0);
+    // Create new image from cropped data
+    const newImg = new Image();
+    newImg.onload = () => {
+      setOriginalImage(newImg);
+      // Clear drawing paths as they won't be valid after crop
+      setDrawingPaths([]);
+      setPathHistory([]);
+      setHistoryIndex(-1);
+    };
+    newImg.src = tempCanvas.toDataURL();
     
     toast.success("Image cropped!");
   };
@@ -401,7 +406,7 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
           />
         </TabsContent>
         
-        <TabsContent value="crop" className="space-y-4">
+        <TabsContent value="crop" className="space-y-4 relative">
           <CropTool
             canvas={canvasRef.current}
             onApplyCrop={handleCrop}

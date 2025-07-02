@@ -1,9 +1,12 @@
-
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Slider } from "@/components/ui/slider";
-import { RotateCw, Save, X, Palette, Brush, Undo2 } from "lucide-react";
+import { Save, X, RotateCw } from "lucide-react";
 import { toast } from "sonner";
+import { CropTool } from "./image-editor/CropTool";
+import { FiltersPanel } from "./image-editor/FiltersPanel";
+import { DrawingTools } from "./image-editor/DrawingTools";
+import { LayersPanel } from "./image-editor/LayersPanel";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface ImageEditorProps {
   imageUrl: string;
@@ -12,23 +15,54 @@ interface ImageEditorProps {
   onCancel: () => void;
 }
 
+interface Layer {
+  id: string;
+  name: string;
+  visible: boolean;
+  opacity: number;
+  blendMode: string;
+}
+
 export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [originalImage, setOriginalImage] = useState<HTMLImageElement | null>(null);
+  
+  // Transform states
   const [rotation, setRotation] = useState(0);
+  const [flipHorizontal, setFlipHorizontal] = useState(false);
+  const [flipVertical, setFlipVertical] = useState(false);
+  
+  // Filter states
   const [brightness, setBrightness] = useState(100);
   const [contrast, setContrast] = useState(100);
   const [saturation, setSaturation] = useState(100);
-  const [originalImage, setOriginalImage] = useState<HTMLImageElement | null>(null);
-  const [isDrawing, setIsDrawing] = useState(false);
+  const [hue, setHue] = useState(0);
+  const [blur, setBlur] = useState(0);
+  const [sepia, setSepia] = useState(0);
+  
+  // Drawing states
   const [drawingMode, setDrawingMode] = useState(false);
+  const [activeDrawingTool, setActiveDrawingTool] = useState<"brush" | "eraser" | "text" | "rectangle" | "circle">("brush");
   const [brushSize, setBrushSize] = useState(3);
   const [brushColor, setBrushColor] = useState("#ff0000");
+  const [isDrawing, setIsDrawing] = useState(false);
   const [lastPoint, setLastPoint] = useState<{ x: number; y: number } | null>(null);
+  
+  // Drawing paths for undo/redo
   const [drawingPaths, setDrawingPaths] = useState<Array<{
     points: Array<{ x: number; y: number }>;
     color: string;
     size: number;
+    tool: string;
   }>>([]);
+  const [pathHistory, setPathHistory] = useState<Array<Array<any>>>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  
+  // Layers
+  const [layers, setLayers] = useState<Layer[]>([
+    { id: "background", name: "Background", visible: true, opacity: 100, blendMode: "normal" }
+  ]);
+  const [activeLayerId, setActiveLayerId] = useState("background");
 
   useEffect(() => {
     const img = new Image();
@@ -38,6 +72,19 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
     };
     img.src = imageUrl;
   }, [imageUrl]);
+
+  const applyFilters = (ctx: CanvasRenderingContext2D) => {
+    const filterString = [
+      `brightness(${brightness}%)`,
+      `contrast(${contrast}%)`,
+      `saturate(${saturation}%)`,
+      `hue-rotate(${hue}deg)`,
+      `blur(${blur}px)`,
+      `sepia(${sepia}%)`
+    ].join(' ');
+    
+    ctx.filter = filterString;
+  };
 
   const drawImage = (img: HTMLImageElement) => {
     const canvas = canvasRef.current;
@@ -56,12 +103,17 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
     // Apply transformations
     ctx.save();
     
-    // Move to center for rotation
+    // Move to center for rotation and flipping
     ctx.translate(canvas.width / 2, canvas.height / 2);
+    
+    // Apply rotation
     ctx.rotate((rotation * Math.PI) / 180);
     
+    // Apply flipping
+    ctx.scale(flipHorizontal ? -1 : 1, flipVertical ? -1 : 1);
+    
     // Apply filters
-    ctx.filter = `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%)`;
+    applyFilters(ctx);
     
     // Draw image
     ctx.drawImage(img, -img.width / 2, -img.height / 2);
@@ -72,7 +124,14 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
     drawingPaths.forEach(path => {
       if (path.points.length < 2) return;
       
-      ctx.strokeStyle = path.color;
+      ctx.save();
+      
+      if (path.tool === "eraser") {
+        ctx.globalCompositeOperation = "destination-out";
+      } else {
+        ctx.strokeStyle = path.color;
+      }
+      
       ctx.lineWidth = path.size;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -85,6 +144,7 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
       }
       
       ctx.stroke();
+      ctx.restore();
     });
   };
 
@@ -92,7 +152,7 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
     if (originalImage) {
       drawImage(originalImage);
     }
-  }, [rotation, brightness, contrast, saturation, originalImage, drawingPaths]);
+  }, [rotation, flipHorizontal, flipVertical, brightness, contrast, saturation, hue, blur, sepia, originalImage, drawingPaths]);
 
   const getMousePos = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -119,7 +179,8 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
     const newPath = {
       points: [pos],
       color: brushColor,
-      size: brushSize
+      size: brushSize,
+      tool: activeDrawingTool
     };
     
     setDrawingPaths(prev => [...prev, newPath]);
@@ -144,18 +205,77 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
   };
 
   const stopDrawing = () => {
+    if (isDrawing) {
+      // Save to history for undo/redo
+      setPathHistory(prev => [...prev.slice(0, historyIndex + 1), [...drawingPaths]]);
+      setHistoryIndex(prev => prev + 1);
+    }
     setIsDrawing(false);
     setLastPoint(null);
+  };
+
+  // Advanced tool handlers
+  const handleCrop = (cropData: { x: number; y: number; width: number; height: number }) => {
+    if (!originalImage) return;
+    
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Create temporary canvas with cropped image
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = cropData.width;
+    tempCanvas.height = cropData.height;
+    const tempCtx = tempCanvas.getContext('2d');
+    if (!tempCtx) return;
+    
+    // Copy cropped area
+    tempCtx.drawImage(canvas, cropData.x, cropData.y, cropData.width, cropData.height, 0, 0, cropData.width, cropData.height);
+    
+    // Update canvas size and redraw
+    canvas.width = cropData.width;
+    canvas.height = cropData.height;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(tempCanvas, 0, 0);
+    
+    toast.success("Image cropped!");
   };
 
   const handleRotate = () => {
     setRotation(prev => (prev + 90) % 360);
   };
 
+  const handleFlipHorizontal = () => {
+    setFlipHorizontal(prev => !prev);
+  };
+
+  const handleFlipVertical = () => {
+    setFlipVertical(prev => !prev);
+  };
+
   const handleUndo = () => {
-    if (drawingPaths.length === 0) return;
-    
-    setDrawingPaths(prev => prev.slice(0, -1));
+    if (historyIndex > 0) {
+      setHistoryIndex(prev => prev - 1);
+      setDrawingPaths(pathHistory[historyIndex - 1] || []);
+    }
+  };
+
+  const handleRedo = () => {
+    if (historyIndex < pathHistory.length - 1) {
+      setHistoryIndex(prev => prev + 1);
+      setDrawingPaths(pathHistory[historyIndex + 1] || []);
+    }
+  };
+
+  const resetFilters = () => {
+    setBrightness(100);
+    setContrast(100);
+    setSaturation(100);
+    setHue(0);
+    setBlur(0);
+    setSepia(0);
   };
 
   const handleSave = () => {
@@ -166,17 +286,76 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
       if (blob) {
         const editedImageUrl = URL.createObjectURL(blob);
         onSave(editedImageUrl);
-        toast.success("Image edited successfully!");
+        toast.success("Image saved successfully!");
       }
     }, 'image/jpeg', 0.9);
   };
 
   const handleReset = () => {
     setRotation(0);
-    setBrightness(100);
-    setContrast(100);
-    setSaturation(100);
+    setFlipHorizontal(false);
+    setFlipVertical(false);
+    resetFilters();
     setDrawingPaths([]);
+    setPathHistory([]);
+    setHistoryIndex(-1);
+  };
+
+  // Layer management handlers
+  const handleLayerAdd = () => {
+    const newLayer: Layer = {
+      id: `layer-${Date.now()}`,
+      name: `Layer ${layers.length}`,
+      visible: true,
+      opacity: 100,
+      blendMode: "normal"
+    };
+    setLayers(prev => [...prev, newLayer]);
+    setActiveLayerId(newLayer.id);
+  };
+
+  const handleLayerDelete = (layerId: string) => {
+    if (layers.length <= 1) return;
+    setLayers(prev => prev.filter(l => l.id !== layerId));
+    if (layerId === activeLayerId) {
+      setActiveLayerId(layers[0]?.id || "");
+    }
+  };
+
+  const handleLayerVisibilityToggle = (layerId: string) => {
+    setLayers(prev => prev.map(l => 
+      l.id === layerId ? { ...l, visible: !l.visible } : l
+    ));
+  };
+
+  const handleLayerOpacityChange = (layerId: string, opacity: number) => {
+    setLayers(prev => prev.map(l => 
+      l.id === layerId ? { ...l, opacity } : l
+    ));
+  };
+
+  const handleLayerMoveUp = (layerId: string) => {
+    setLayers(prev => {
+      const index = prev.findIndex(l => l.id === layerId);
+      if (index > 0) {
+        const newLayers = [...prev];
+        [newLayers[index], newLayers[index - 1]] = [newLayers[index - 1], newLayers[index]];
+        return newLayers;
+      }
+      return prev;
+    });
+  };
+
+  const handleLayerMoveDown = (layerId: string) => {
+    setLayers(prev => {
+      const index = prev.findIndex(l => l.id === layerId);
+      if (index < prev.length - 1) {
+        const newLayers = [...prev];
+        [newLayers[index], newLayers[index + 1]] = [newLayers[index + 1], newLayers[index]];
+        return newLayers;
+      }
+      return prev;
+    });
   };
 
   return (
@@ -195,141 +374,99 @@ export const ImageEditor = ({ imageUrl, file, onSave, onCancel }: ImageEditorPro
         />
       </div>
 
-      {/* Controls */}
-      <div className="space-y-4">
-        {/* Drawing Controls */}
-        <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-          <Button
-            variant={drawingMode ? "default" : "outline"}
-            size="sm"
-            onClick={() => setDrawingMode(!drawingMode)}
-            className={drawingMode ? "bg-blue-600 text-white" : "bg-white/80"}
-          >
-            <Brush className="w-4 h-4 mr-1" />
-            Draw
-          </Button>
-          
-          {drawingMode && (
-            <>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-700">Size:</span>
-                <Slider
-                  value={[brushSize]}
-                  onValueChange={(value) => setBrushSize(value[0])}
-                  max={20}
-                  min={1}
-                  step={1}
-                  className="w-20"
-                />
-                <span className="text-sm text-gray-500 w-6">{brushSize}</span>
-              </div>
-              
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-700">Color:</span>
-                <input
-                  type="color"
-                  value={brushColor}
-                  onChange={(e) => setBrushColor(e.target.value)}
-                  className="w-8 h-8 border rounded cursor-pointer"
-                />
-              </div>
-              
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleUndo}
-                disabled={drawingPaths.length === 0}
-                className="bg-white/80"
-              >
-                <Undo2 className="w-4 h-4" />
-              </Button>
-            </>
-          )}
-        </div>
+      {/* Controls Tabs */}
+      <Tabs defaultValue="filters" className="w-full">
+        <TabsList className="grid w-full grid-cols-4">
+          <TabsTrigger value="filters">Filters</TabsTrigger>
+          <TabsTrigger value="crop">Transform</TabsTrigger>
+          <TabsTrigger value="draw">Draw</TabsTrigger>
+          <TabsTrigger value="layers">Layers</TabsTrigger>
+        </TabsList>
+        
+        <TabsContent value="filters" className="space-y-4">
+          <FiltersPanel
+            brightness={brightness}
+            contrast={contrast}
+            saturation={saturation}
+            hue={hue}
+            blur={blur}
+            sepia={sepia}
+            onBrightnessChange={setBrightness}
+            onContrastChange={setContrast}
+            onSaturationChange={setSaturation}
+            onHueChange={setHue}
+            onBlurChange={setBlur}
+            onSepiaChange={setSepia}
+            onReset={resetFilters}
+          />
+        </TabsContent>
+        
+        <TabsContent value="crop" className="space-y-4">
+          <CropTool
+            canvas={canvasRef.current}
+            onApplyCrop={handleCrop}
+            onRotate={handleRotate}
+            onFlipHorizontal={handleFlipHorizontal}
+            onFlipVertical={handleFlipVertical}
+          />
+        </TabsContent>
+        
+        <TabsContent value="draw" className="space-y-4">
+          <DrawingTools
+            drawingMode={drawingMode}
+            brushSize={brushSize}
+            brushColor={brushColor}
+            activeDrawingTool={activeDrawingTool}
+            onToggleDrawing={() => setDrawingMode(!drawingMode)}
+            onBrushSizeChange={setBrushSize}
+            onBrushColorChange={setBrushColor}
+            onToolChange={setActiveDrawingTool}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            canUndo={historyIndex > 0}
+            canRedo={historyIndex < pathHistory.length - 1}
+          />
+        </TabsContent>
+        
+        <TabsContent value="layers" className="space-y-4">
+          <LayersPanel
+            layers={layers}
+            activeLayerId={activeLayerId}
+            onLayerSelect={setActiveLayerId}
+            onLayerVisibilityToggle={handleLayerVisibilityToggle}
+            onLayerOpacityChange={handleLayerOpacityChange}
+            onLayerAdd={handleLayerAdd}
+            onLayerDelete={handleLayerDelete}
+            onLayerMoveUp={handleLayerMoveUp}
+            onLayerMoveDown={handleLayerMoveDown}
+          />
+        </TabsContent>
+      </Tabs>
 
-        {/* Rotation */}
-        <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRotate}
-            className="bg-white/80"
-          >
-            <RotateCw className="w-4 h-4 mr-1" />
-            Rotate
-          </Button>
-        </div>
-
-        {/* Filters */}
-        <div className="space-y-3">
-          <div className="flex items-center gap-3">
-            <Palette className="w-4 h-4 text-gray-600" />
-            <span className="text-sm font-medium text-gray-700 w-20">Brightness</span>
-            <Slider
-              value={[brightness]}
-              onValueChange={(value) => setBrightness(value[0])}
-              max={200}
-              min={0}
-              step={1}
-              className="flex-1"
-            />
-            <span className="text-sm text-gray-500 w-12">{brightness}%</span>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="w-4" />
-            <span className="text-sm font-medium text-gray-700 w-20">Contrast</span>
-            <Slider
-              value={[contrast]}
-              onValueChange={(value) => setContrast(value[0])}
-              max={200}
-              min={0}
-              step={1}
-              className="flex-1"
-            />
-            <span className="text-sm text-gray-500 w-12">{contrast}%</span>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="w-4" />
-            <span className="text-sm font-medium text-gray-700 w-20">Saturation</span>
-            <Slider
-              value={[saturation]}
-              onValueChange={(value) => setSaturation(value[0])}
-              max={200}
-              min={0}
-              step={1}
-              className="flex-1"
-            />
-            <span className="text-sm text-gray-500 w-12">{saturation}%</span>
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={handleReset}
-            className="flex-1 bg-white/80"
-          >
-            Reset
-          </Button>
-          <Button
-            variant="outline"
-            onClick={onCancel}
-            className="flex-1 bg-white/80"
-          >
-            <X className="w-4 h-4 mr-1" />
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSave}
-            className="flex-1 bg-gradient-to-r from-green-500 to-blue-600 hover:from-green-600 hover:to-blue-700 text-white"
-          >
-            <Save className="w-4 h-4 mr-1" />
-            Save
-          </Button>
-        </div>
+      {/* Action Buttons */}
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          onClick={handleReset}
+          className="flex-1 bg-white/80"
+        >
+          Reset All
+        </Button>
+        <Button
+          variant="outline"
+          onClick={onCancel}
+          className="flex-1 bg-white/80"
+        >
+          <X className="w-4 h-4 mr-1" />
+          Cancel
+        </Button>
+        <Button
+          onClick={handleSave}
+          className="flex-1 bg-gradient-to-r from-green-500 to-blue-600 hover:from-green-600 hover:to-blue-700 text-white"
+        >
+          <Save className="w-4 h-4 mr-1" />
+          Save
+        </Button>
       </div>
     </div>
   );
